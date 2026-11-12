@@ -56,6 +56,7 @@
   <span style="flex:1"></span>
   <button id="btnScan">Scan mailbox</button>
   <button id="btnRules" class="secondary">Block rules</button>
+  <button id="btnBounces" class="secondary" title="Find unsubscribe e-mails that bounced, mark them as failed and tidy the bounce notices">Check bounces</button>
   <button id="btnLog" class="secondary">Toggle log</button>
   <button id="btnSignout" class="secondary">Sign out</button>
   <button id="btnQuit" class="secondary">Quit</button>
@@ -346,6 +347,8 @@ $('#btnApply').addEventListener('click', async () => {
       if (confirm(`${r.manual_urls.length} senders need a manual click. Open them in new tabs now?`)) r.manual_urls.forEach(u => window.open(u, '_blank'));
     }
     selected.clear(); await loadSenders();
+    const sentMailto = (r.results||[]).some(x => (x.unsubscribe?.method||'').includes('mailto') && x.unsubscribe?.ok);
+    if (sentMailto) { log('mailto unsubscribes were sent; bounce check will run in 2 minutes'); setTimeout(() => checkBounces(1), 120000); }
   } catch (e) { log('apply failed: '+e.message); }
 });
 
@@ -355,6 +358,20 @@ async function setKeep(keep) {
 }
 $('#btnKeep').addEventListener('click', () => setKeep(true));
 $('#btnUnkeep').addEventListener('click', () => setKeep(false));
+
+async function checkBounces(hours) {
+  log('checking for bounced unsubscribe e-mails...');
+  try {
+    const r = await api('/api/bounces', {method:'POST', body: JSON.stringify({hours: hours || 24})});
+    log(`bounce check: ${r.ndrs} bounce notices found, ${r.bounced.length} matched to unsubscribes (now marked failed), ${r.ndrs_moved} notices moved to Deleted Items`);
+    if (r.manual_urls.length) {
+      log('These senders need a manual click instead:\n' + r.manual_urls.join('\n'));
+      if (confirm(`${r.manual_urls.length} bounced unsubscribes have a web link. Open them now?`)) r.manual_urls.forEach(u => window.open(u, '_blank'));
+    }
+    await loadSenders();
+  } catch (e) { log('bounce check failed: ' + e.message); }
+}
+$('#btnBounces').addEventListener('click', () => checkBounces(24));
 
 $('#btnRules').addEventListener('click', async () => {
   const rules = await api('/api/rules');

@@ -6,6 +6,8 @@ Every action is appended to data/actions.jsonl so you always have an audit trail
 from __future__ import annotations
 
 import json
+import re
+import time
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -63,15 +65,37 @@ def unsubscribe_one_click(url: str) -> dict:
         return {"ok": False, "status": 0, "detail": str(exc)[:200]}
 
 
+MAILTO_MIN_GAP_SECONDS = 20  # outlook.com's outbound filter blocks bursts of near-identical mail
+_last_mailto_sent = 0.0
+
+DEFAULT_UNSUB_BODY = (
+    "unsubscribe\n\n"
+    "Please remove this address from your mailing list.\n"
+    "This request was sent by the mailbox owner using inboxctl (RFC 2369 List-Unsubscribe)."
+)
+
+
+def mailto_address(mailto_uri: str) -> str:
+    try:
+        return unquote(urlparse(mailto_uri).path).strip().lower()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def unsubscribe_mailto(graph: Graph, mailto_uri: str) -> dict:
-    """Send the unsubscribe e-mail through the user's own mailbox (Graph sendMail)."""
+    """Send the unsubscribe e-mail through the user's own mailbox (Graph sendMail), throttled."""
+    global _last_mailto_sent
     parsed = urlparse(mailto_uri)
     to_addr = unquote(parsed.path).strip()
     qs = parse_qs(parsed.query)
     subject = unquote(qs.get("subject", ["unsubscribe"])[0])
-    body = unquote(qs.get("body", ["unsubscribe"])[0])
+    body = unquote(qs["body"][0]) if qs.get("body") else DEFAULT_UNSUB_BODY
     if not to_addr:
         return {"ok": False, "status": 0, "detail": "mailto without address"}
+    wait = MAILTO_MIN_GAP_SECONDS - (time.time() - _last_mailto_sent)
+    if wait > 0:
+        time.sleep(wait)
+    _last_mailto_sent = time.time()
     payload = {
         "message": {
             "subject": subject,
@@ -135,6 +159,50 @@ def sweep(graph: Graph, sender: dict, destination: str = "deleteditems") -> dict
     out = {"ok": failed == 0, "moved": moved, "failed": failed, "detail": ""}
     _log({"action": "sweep", "email": sender["email"], **out})
     return out
+
+
+# -------------------------------------------------------------------- bounces
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.\w+")
+_NDR_SENDERS = ("postmaster@", "mailer-daemon@", "mail delivery")
+
+
+def check_bounces(graph: Graph, senders: list[dict], since_iso: str, sweep_ndrs: bool = True) -> dict:
+    """Find non-delivery reports received since `since_iso`, match them to mailto unsubscribes we sent,
+    log those as failed (with the manual link when there is one) and optionally move the NDRs away."""
+    msgs = list(graph.paged("/me/mailFolders/inbox/messages", params={
+        "$filter": f"receivedDateTime ge {since_iso}",
+        "$select": "id,subject,from,receivedDateTime,bodyPreview", "$top": 50,
+        "$orderby": "receivedDateTime desc"}))
+    ndrs = []
+    for m in msgs:
+        frm = ((m.get("from") or {}).get("emailAddress") or {})
+        who = (frm.get("address") or "").lower() + " " + (frm.get("name") or "").lower()
+        subj = (m.get("subject") or "").lower()
+        if subj.startswith("undeliverable") or any(k in who for k in _NDR_SENDERS):
+            ndrs.append(m)
+    failed_addrs: set[str] = set()
+    for m in ndrs:
+        for a in _EMAIL_RE.findall((m.get("bodyPreview") or "") + " " + (m.get("subject") or "")):
+            a = a.lower()
+            if not a.startswith(("postmaster@", "mailer-daemon@")):
+                failed_addrs.add(a)
+    by_mailto = {mailto_address(s.get("unsub_mailto", "")): s for s in senders if s.get("unsub_mailto")}
+    bounced = []
+    for addr in failed_addrs:
+        s = by_mailto.get(addr)
+        if not s:
+            continue
+        entry = {"action": "unsubscribe", "email": s["email"], "method": "mailto", "ok": False, "status": 0,
+                 "detail": "bounced (unsubscribe address rejected the mail)", "manual_url": s.get("unsub_http", "")}
+        _log(entry)
+        bounced.append(entry)
+    moved = 0
+    if sweep_ndrs and ndrs:
+        reqs = [{"id": str(i), "method": "POST", "url": f"/me/messages/{m['id']}/move",
+                 "body": {"destinationId": "deleteditems"}} for i, m in enumerate(ndrs)]
+        moved = sum(1 for r in graph.batch(reqs) if 200 <= int(r.get("status", 0)) < 300)
+    return {"ndrs": len(ndrs), "bounced": bounced, "ndrs_moved": moved,
+            "manual_urls": [b["manual_url"] for b in bounced if b["manual_url"]]}
 
 
 # ---------------------------------------------------------------------- rules

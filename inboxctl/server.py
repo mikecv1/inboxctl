@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import threading
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -65,6 +66,12 @@ class KeepRequest(BaseModel):
 
 class AuthStart(BaseModel):
     mode: str = "browser"  # browser | device
+
+
+class BounceRequest(BaseModel):
+    since: str | None = None   # ISO timestamp; default = now - hours
+    hours: int = 24
+    sweep: bool = True         # move the bounce notices to Deleted Items
 
 
 def create_app(cfg: Config) -> FastAPI:
@@ -197,6 +204,13 @@ def create_app(cfg: Config) -> FastAPI:
                       if r.get("unsubscribe", {}).get("manual_url")]
             return {"results": results, "manual_urls": manual}
         return {"job": jobs.start("apply", run)}
+
+    @app.post("/api/bounces")
+    def bounces(req: BounceRequest):
+        auth.get_token()
+        since = req.since or (datetime.now(timezone.utc) - timedelta(hours=req.hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        senders = load_senders().get("senders", [])
+        return actions.check_bounces(graph, senders, since, sweep_ndrs=req.sweep)
 
     @app.post("/api/unblock")
     def unblock(req: KeepRequest):
