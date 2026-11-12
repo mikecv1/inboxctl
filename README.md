@@ -9,6 +9,8 @@ Clean up a cluttered Outlook.com / Hotmail / Live mailbox from your own computer
 
 Everything runs locally. There is no server, no account, no data collection. The only outbound traffic is to Microsoft Graph (your own mailbox) and to the unsubscribe endpoints you explicitly approve.
 
+Portuguese quick guide for non-technical users: [LEIAME.md](LEIAME.md)
+
 ## For users: download and run
 
 1. Download the latest build from the **Releases** page: `inboxctl.exe` (Windows) or `inboxctl-macos.zip` (macOS).
