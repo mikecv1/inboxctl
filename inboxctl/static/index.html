@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>inboxctl</title>
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --line:#262b36; --text:#e6e8ee; --muted:#8b93a7; --accent:#4f8cff; --ok:#2fbf71; --warn:#e0a526; --bad:#e5484d; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.45 -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; background:var(--bg); color:var(--text); }
+  header { display:flex; gap:16px; align-items:center; padding:12px 20px; border-bottom:1px solid var(--line); background:var(--panel); position:sticky; top:0; z-index:5; flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0 12px 0 0; }
+  .muted { color:var(--muted); }
+  button { background:var(--accent); color:#fff; border:0; border-radius:6px; padding:7px 12px; cursor:pointer; font-weight:600; }
+  button.secondary { background:transparent; border:1px solid var(--line); color:var(--text); }
+  button.danger { background:var(--bad); }
+  button:disabled { opacity:.5; cursor:default; }
+  input[type=text], select { background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:6px 8px; }
+  .toolbar { display:flex; gap:10px; align-items:center; padding:10px 20px; flex-wrap:wrap; border-bottom:1px solid var(--line); }
+  .bulk { display:flex; gap:10px; align-items:center; padding:10px 20px; background:#121622; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  .bulk label { display:flex; gap:6px; align-items:center; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { padding:8px 10px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
+  th { position:sticky; top:57px; background:var(--panel); cursor:pointer; user-select:none; font-weight:600; color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.03em; }
+  tr:hover td { background:#141821; }
+  tr.kept td { opacity:.45; }
+  .badge { display:inline-block; padding:2px 7px; border-radius:10px; font-size:11px; font-weight:700; }
+  .b-one-click { background:#163d2a; color:var(--ok); }
+  .b-mailto { background:#2d3a16; color:#b5d944; }
+  .b-link { background:#3d2f12; color:var(--warn); }
+  .b-none { background:#3a1a1c; color:var(--bad); }
+  .small { font-size:12px; }
+  .num { text-align:right; font-variant-numeric:tabular-nums; }
+  #log { font:12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; white-space:pre-wrap; background:#0b0d12; border:1px solid var(--line); border-radius:6px; padding:10px; max-height:220px; overflow:auto; margin:10px 20px; display:none; }
+  .hist { color:var(--muted); font-size:11px; }
+  .hist .ok { color:var(--ok); } .hist .bad { color:var(--bad); }
+  a { color:var(--accent); }
+  dialog { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:10px; padding:20px; max-width:560px; }
+  dialog::backdrop { background:rgba(0,0,0,.6); }
+  #connect { position:fixed; inset:0; background:var(--bg); z-index:20; display:none; align-items:center; justify-content:center; }
+  #connect .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:32px; max-width:520px; width:92%; }
+  #connect h2 { margin:0 0 8px; font-size:20px; }
+  #connect p { color:var(--muted); margin:6px 0 16px; }
+  #connect button.big { width:100%; padding:12px; font-size:15px; margin-top:6px; }
+  .code { font:28px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing:.12em; background:#0b0d12; border:1px solid var(--line); border-radius:8px; padding:14px; text-align:center; margin:12px 0; user-select:all; }
+  .err { color:var(--bad); font-size:13px; margin-top:10px; }
+  .spinner { display:inline-block; width:14px; height:14px; border:2px solid var(--muted); border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite; vertical-align:middle; margin-right:6px; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+</style>
+</head>
+<body>
+<header>
+  <h1>inboxctl</h1>
+  <span id="who" class="muted">connecting...</span>
+  <span id="scanmeta" class="muted"></span>
+  <span style="flex:1"></span>
+  <button id="btnScan">Scan mailbox</button>
+  <button id="btnRules" class="secondary">Block rules</button>
+  <button id="btnLog" class="secondary">Toggle log</button>
+  <button id="btnSignout" class="secondary">Sign out</button>
+  <button id="btnQuit" class="secondary">Quit</button>
+</header>
+
+<div id="connect">
+  <div class="card">
+    <h2>Connect your mailbox</h2>
+    <p>inboxctl runs on this computer only. It reads your inbox to list senders, and only acts on the ones you tick. Nothing is sent anywhere else.</p>
+    <div id="cBrowser">
+      <button class="big" id="btnConnect">Connect Microsoft account</button>
+      <p class="small" style="margin-top:12px">Works with Outlook.com, Hotmail and Live addresses. A Microsoft sign-in page opens in your browser; sign in, accept the permissions, then come back here.</p>
+      <a href="#" id="lnkDevice" class="small">Sign-in page did not open or got stuck? Use a code instead</a>
+    </div>
+    <div id="cPending" style="display:none">
+      <p><span class="spinner"></span>Waiting for you to finish signing in with Microsoft...</p>
+      <div id="cDevice" style="display:none">
+        <p>1. Copy this code. 2. Open the Microsoft page. 3. Paste the code, sign in, accept.</p>
+        <div class="code" id="devCode"></div>
+        <button class="big" id="btnCopyOpen">Copy code and open Microsoft page</button>
+      </div>
+      <a href="#" id="lnkCancel" class="small">Start over</a>
+    </div>
+    <div class="err" id="cErr"></div>
+  </div>
+</div>
+
+<div class="toolbar">
+  <input type="text" id="q" placeholder="Search sender, domain, subject" size="34">
+  <select id="fMethod">
+    <option value="">Any unsubscribe method</option>
+    <option value="one-click">One-click (RFC 8058)</option>
+    <option value="mailto">Mailto</option>
+    <option value="link">Link (manual)</option>
+    <option value="none">None (block only)</option>
+  </select>
+  <select id="fMin">
+    <option value="1">1+ messages</option>
+    <option value="3" selected>3+ messages</option>
+    <option value="10">10+ messages</option>
+    <option value="25">25+ messages</option>
+  </select>
+  <label><input type="checkbox" id="fHideKept" checked> hide kept</label>
+  <label><input type="checkbox" id="fHideDone" checked> hide already handled</label>
+  <span id="count" class="muted"></span>
+</div>
+
+<div class="bulk">
+  <strong id="selCount">0 selected</strong>
+  <label><input type="checkbox" id="aUnsub" checked> Unsubscribe</label>
+  <label><input type="checkbox" id="aBlock" checked> Block future mail (inbox rule)</label>
+  <label><input type="checkbox" id="aSweep"> Move existing mail to Deleted Items</label>
+  <button id="btnApply" disabled>Apply to selected</button>
+  <button id="btnKeep" class="secondary" disabled>Mark as keep</button>
+  <button id="btnUnkeep" class="secondary" disabled>Remove keep</button>
+</div>
+
+<div id="log"></div>
+
+<table>
+  <thead>
+    <tr>
+      <th style="width:28px"><input type="checkbox" id="selAll"></th>
+      <th data-k="name">Sender</th>
+      <th data-k="domain">Domain</th>
+      <th data-k="count" class="num">Msgs</th>
+      <th data-k="unread" class="num">Unread</th>
+      <th data-k="last_seen">Last</th>
+      <th data-k="unsub_method">Unsubscribe</th>
+      <th>Sample subject</th>
+      <th>Status</th>
+    </tr>
+  </thead>
+  <tbody id="rows"></tbody>
+</table>
+
+<dialog id="dlg">
+  <h3 id="dlgTitle" style="margin-top:0">Confirm</h3>
+  <div id="dlgBody"></div>
+  <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:16px">
+    <button class="secondary" id="dlgCancel">Cancel</button>
+    <button class="danger" id="dlgOk">Yes, do it</button>
+  </div>
+</dialog>
+
+<script>
+const $ = s => document.querySelector(s);
+let senders = [], selected = new Set(), sortKey = 'count', sortDir = -1;
+
+const api = async (path, opts={}) => {
+  const r = await fetch(path, {headers:{'Content-Type':'application/json'}, ...opts});
+  if (r.status === 401) { showConnect(); throw new Error('not signed in'); }
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+};
+
+// ---------------------------------------------------------------- connect flow
+let authPoll = null;
+function showConnect(state) {
+  const c = $('#connect'); c.style.display = 'flex';
+  const pending = state && state.status === 'pending';
+  $('#cBrowser').style.display = pending ? 'none' : 'block';
+  $('#cPending').style.display = pending ? 'block' : 'none';
+  $('#cErr').textContent = (state && state.status === 'error') ? ('Sign-in failed: ' + state.error) : '';
+  if (pending && state.mode === 'device' && state.user_code) {
+    $('#cDevice').style.display = 'block';
+    $('#devCode').textContent = state.user_code;
+    $('#btnCopyOpen').onclick = async () => {
+      try { await navigator.clipboard.writeText(state.user_code); } catch (e) {}
+      window.open(state.verification_uri || 'https://www.microsoft.com/link', '_blank');
+    };
+  } else {
+    $('#cDevice').style.display = 'none';
+  }
+  if (pending && !authPoll) authPoll = setInterval(checkAuth, 1500);
+}
+function hideConnect() { $('#connect').style.display = 'none'; if (authPoll) { clearInterval(authPoll); authPoll = null; } }
+
+async function checkAuth() {
+  const st = await fetch('/api/auth').then(r => r.json());
+  if (st.status === 'signed_in') { hideConnect(); await afterSignIn(); return st; }
+  showConnect(st);
+  return st;
+}
+async function startAuth(mode) {
+  $('#cErr').textContent = '';
+  const st = await fetch('/api/auth/start', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({mode})}).then(r => r.json());
+  showConnect(st);
+  if (mode === 'device') {
+    // device code arrives a moment after start; poll until it is there, then open the page once
+    const t = setInterval(async () => {
+      const s = await fetch('/api/auth').then(r => r.json());
+      if (s.user_code) { clearInterval(t); showConnect(s); $('#btnCopyOpen').click(); }
+      if (s.status !== 'pending') clearInterval(t);
+    }, 700);
+  }
+}
+$('#btnConnect').addEventListener('click', () => startAuth('browser'));
+$('#lnkDevice').addEventListener('click', e => { e.preventDefault(); startAuth('device'); });
+$('#lnkCancel').addEventListener('click', async e => { e.preventDefault(); await fetch('/api/auth/signout', {method:'POST'}); hideConnect(); showConnect({status:'signed_out'}); });
+$('#btnSignout').addEventListener('click', async () => { if (!confirm('Sign out of this mailbox on this computer?')) return; await fetch('/api/auth/signout', {method:'POST'}); location.reload(); });
+$('#btnQuit').addEventListener('click', async () => { await fetch('/api/quit', {method:'POST'}); document.body.innerHTML = '<p style="padding:40px;color:#8b93a7">inboxctl closed. You can close this tab.</p>'; });
+
+let firstScanKicked = false;
+async function afterSignIn() {
+  await loadStatus();
+  await loadSenders();
+  const st = await api('/api/status');
+  if (st.scan_job) { $('#btnScan').disabled = true; log('scan in progress'); await waitJob(st.scan_job); $('#btnScan').disabled = false; await loadStatus(); await loadSenders(); }
+  else if (!st.scanned_at && !firstScanKicked) { firstScanKicked = true; $('#btnScan').click(); }
+}
+const log = (m) => { const el=$('#log'); el.style.display='block'; el.textContent += m + '\n'; el.scrollTop = el.scrollHeight; };
+const fmtDate = s => s ? s.slice(0,10) : '';
+const esc = s => (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+async function loadStatus() {
+  const st = await api('/api/status');
+  $('#who').textContent = st.me?.error ? ('not connected: ' + st.me.error) : `${st.me.displayName || ''} <${st.me.mail || st.me.userPrincipalName || ''}>`;
+  $('#scanmeta').textContent = st.scanned_at ? `scanned ${st.scanned_at.slice(0,16).replace('T',' ')} UTC, ${st.message_count} msgs, ${st.sender_count} senders, folders: ${st.folders.join(', ')}` : 'no scan yet';
+}
+
+async function loadSenders() {
+  const d = await api('/api/senders');
+  senders = d.senders;
+  render();
+}
+
+function handled(s) {
+  const h = s.history || {};
+  return (h.unsubscribe && h.unsubscribe.ok) || (h.block && h.block.ok);
+}
+
+function visible() {
+  const q = $('#q').value.toLowerCase(), m = $('#fMethod').value, min = +$('#fMin').value;
+  const hideKept = $('#fHideKept').checked, hideDone = $('#fHideDone').checked;
+  return senders.filter(s =>
+    s.count >= min &&
+    (!m || s.unsub_method === m) &&
+    (!hideKept || !s.keep) &&
+    (!hideDone || !handled(s)) &&
+    (!q || s.email.includes(q) || (s.name||'').toLowerCase().includes(q) || s.domain.includes(q) || (s.subjects||[]).join(' ').toLowerCase().includes(q))
+  ).sort((a,b) => {
+    const x=a[sortKey], y=b[sortKey];
+    return (x>y?1:x<y?-1:0) * sortDir;
+  });
+}
+
+function histHtml(s) {
+  const h = s.history || {}; const parts = [];
+  for (const k of ['unsubscribe','block','sweep']) if (h[k]) {
+    parts.push(`<span class="${h[k].ok?'ok':'bad'}">${k} ${h[k].ok?'ok':'failed'}</span>${h[k].detail?` <span title="${esc(h[k].detail)}">(${esc(h[k].detail.slice(0,40))})</span>`:''}`);
+  }
+  if (s.keep) parts.unshift('<span>kept</span>');
+  return parts.join('<br>');
+}
+
+function render() {
+  const rows = visible();
+  $('#count').textContent = `${rows.length} of ${senders.length} senders shown`;
+  $('#rows').innerHTML = rows.map(s => `
+    <tr class="${s.keep?'kept':''}" data-e="${esc(s.email)}">
+      <td><input type="checkbox" class="sel" ${selected.has(s.email)?'checked':''}></td>
+      <td><div>${esc(s.name) || '<span class="muted">(no name)</span>'}</div><div class="small muted">${esc(s.email)}</div></td>
+      <td class="small">${esc(s.domain)}</td>
+      <td class="num">${s.count}</td>
+      <td class="num muted">${s.unread}</td>
+      <td class="small">${fmtDate(s.last_seen)}</td>
+      <td><span class="badge b-${s.unsub_method}">${s.unsub_method}</span>${s.unsub_method==='link'?` <a class="small" href="${esc(s.unsub_http)}" target="_blank" rel="noopener">open</a>`:''}${s.unsub_method==='none' && s.has_unsubscribe_word?' <span class="small muted" title="Body mentions unsubscribe but no header; open a message to find the link">body link?</span>':''}</td>
+      <td class="small muted">${esc((s.subjects||[])[0]||'')}</td>
+      <td class="hist">${histHtml(s)}</td>
+    </tr>`).join('');
+  updateSel();
+}
+
+function updateSel() {
+  const vis = new Set(visible().map(s=>s.email));
+  for (const e of [...selected]) if (!vis.has(e)) selected.delete(e);
+  $('#selCount').textContent = `${selected.size} selected`;
+  const any = selected.size>0;
+  $('#btnApply').disabled = !any; $('#btnKeep').disabled = !any; $('#btnUnkeep').disabled = !any;
+}
+
+document.addEventListener('change', e => {
+  if (e.target.classList.contains('sel')) {
+    const email = e.target.closest('tr').dataset.e;
+    e.target.checked ? selected.add(email) : selected.delete(email);
+    updateSel();
+  }
+});
+$('#selAll').addEventListener('change', e => {
+  visible().forEach(s => e.target.checked ? selected.add(s.email) : selected.delete(s.email));
+  render();
+});
+['#q','#fMethod','#fMin','#fHideKept','#fHideDone'].forEach(s => $(s).addEventListener('input', render));
+document.querySelectorAll('th[data-k]').forEach(th => th.addEventListener('click', () => {
+  const k = th.dataset.k; if (sortKey===k) sortDir*=-1; else { sortKey=k; sortDir = (k==='count'||k==='unread'||k==='last_seen') ? -1 : 1; } render();
+}));
+$('#btnLog').addEventListener('click', () => { const el=$('#log'); el.style.display = el.style.display==='none'||!el.style.display ? 'block':'none'; });
+
+async function waitJob(id) {
+  let seen = 0;
+  while (true) {
+    const j = await api('/api/jobs/'+id);
+    for (; seen < j.log.length; seen++) log(j.log[seen]);
+    if (j.status !== 'running') { if (j.error) log('ERROR: '+j.error); return j; }
+    await new Promise(r => setTimeout(r, 1000));
+  }
+}
+
+$('#btnScan').addEventListener('click', async () => {
+  $('#btnScan').disabled = true; log('scan started');
+  try { const {job} = await api('/api/scan', {method:'POST'}); await waitJob(job); await loadStatus(); await loadSenders(); }
+  catch (e) { log('scan failed: '+e.message); }
+  $('#btnScan').disabled = false;
+});
+
+function confirmDlg(title, html) {
+  return new Promise(res => {
+    $('#dlgTitle').textContent = title; $('#dlgBody').innerHTML = html;
+    const d = $('#dlg'); d.showModal();
+    $('#dlgOk').onclick = () => { d.close(); res(true); };
+    $('#dlgCancel').onclick = () => { d.close(); res(false); };
+  });
+}
+
+$('#btnApply').addEventListener('click', async () => {
+  const emails = [...selected];
+  const opts = {unsubscribe: $('#aUnsub').checked, block: $('#aBlock').checked, sweep: $('#aSweep').checked};
+  if (!opts.unsubscribe && !opts.block && !opts.sweep) return alert('Pick at least one action.');
+  const msgs = senders.filter(s=>selected.has(s.email)).reduce((a,s)=>a+s.count,0);
+  const ok = await confirmDlg(`Apply to ${emails.length} senders`, `
+    <ul>
+      ${opts.unsubscribe?'<li>Send unsubscribe requests (one-click POST or mailto). Link-only senders will be listed for manual click.</li>':''}
+      ${opts.block?'<li>Create an inbox rule per sender: future mail goes straight to Deleted Items.</li>':''}
+      ${opts.sweep?`<li><strong>Move ${msgs} existing messages to Deleted Items.</strong> Recoverable from Deleted Items until you empty it.</li>`:''}
+    </ul>
+    <div class="small muted">Senders: ${emails.slice(0,12).map(esc).join(', ')}${emails.length>12?` and ${emails.length-12} more`:''}</div>`);
+  if (!ok) return;
+  $('#btnApply').disabled = true; log(`apply started for ${emails.length} senders`);
+  try {
+    const {job} = await api('/api/apply', {method:'POST', body: JSON.stringify({emails, ...opts})});
+    const j = await waitJob(job);
+    const r = j.result || {};
+    const okU = (r.results||[]).filter(x=>x.unsubscribe?.ok).length;
+    log(`done. unsubscribe ok: ${okU}, manual links: ${(r.manual_urls||[]).length}`);
+    if ((r.manual_urls||[]).length) {
+      log('Open these to finish unsubscribing:\n' + r.manual_urls.join('\n'));
+      if (confirm(`${r.manual_urls.length} senders need a manual click. Open them in new tabs now?`)) r.manual_urls.forEach(u => window.open(u, '_blank'));
+    }
+    selected.clear(); await loadSenders();
+  } catch (e) { log('apply failed: '+e.message); }
+});
+
+async function setKeep(keep) {
+  await api('/api/keep', {method:'POST', body: JSON.stringify({emails:[...selected], keep})});
+  selected.clear(); await loadSenders();
+}
+$('#btnKeep').addEventListener('click', () => setKeep(true));
+$('#btnUnkeep').addEventListener('click', () => setKeep(false));
+
+$('#btnRules').addEventListener('click', async () => {
+  const rules = await api('/api/rules');
+  log(`${rules.length} inboxctl block rules in your mailbox:\n` + rules.map(r=>`  ${r.displayName}${r.isEnabled?'':' (disabled)'}`).join('\n'));
+});
+
+checkAuth().catch(e => log('init failed: '+e.message));
+</script>
+</body>
+</html>

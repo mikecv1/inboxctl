@@ -1,0 +1,8 @@
+{
+  "client_id": "PASTE-YOUR-APPLICATION-CLIENT-ID-HERE",
+  "authority_tenant": "consumers",
+  "folders": ["inbox"],
+  "max_messages_per_folder": 0,
+  "host": "127.0.0.1",
+  "port": 8765
+}

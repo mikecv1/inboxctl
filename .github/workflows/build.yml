@@ -1,0 +1,50 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: inboxctl-windows
+            path: dist/inboxctl.exe
+          - os: macos-latest
+            artifact: inboxctl-macos
+            path: dist/inboxctl.app
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt pyinstaller
+      - run: pyinstaller inboxctl.spec
+      - name: Zip macOS app
+        if: runner.os == 'macOS'
+        run: cd dist && zip -r inboxctl-macos.zip inboxctl.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ runner.os == 'macOS' && 'dist/inboxctl-macos.zip' || matrix.path }}
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/inboxctl-windows/inboxctl.exe
+            artifacts/inboxctl-macos/inboxctl-macos.zip
